@@ -1,7 +1,7 @@
 create or replace package body as_xlsx
 is
   --
-  c_version constant varchar2(20) := 'as_xlsx51';
+  c_version constant varchar2(20) := 'as_xlsx52';
   --
   c_lob_duration constant pls_integer := dbms_lob.call;
   c_LOCAL_FILE_HEADER        constant raw(4) := hextoraw( '504B0304' ); -- Local file header signature
@@ -154,6 +154,7 @@ is
     , height pls_integer
     );
   type tp_images is table of tp_image index by pls_integer;
+  type tp_styles is table of tp_XF_fmt index by varchar2(100);
   type tp_book is record
     ( sheets tp_sheets
     , strings tp_strings
@@ -168,6 +169,9 @@ is
     , defined_names tp_defined_names
     , images        tp_images
     , tables        tp_tables
+    , styles        tp_styles
+    , zebra_fillId  pls_integer
+    , accent        varchar2(8)
     );
   workbook tp_book;
   --
@@ -482,6 +486,7 @@ $END
     workbook.cellXfs.delete;
     workbook.defined_names.delete;
     workbook.tables.delete;
+    workbook.styles.delete;
     for i in 1 .. workbook.images.count
     loop
       dbms_lob.freetemporary( workbook.images(i).img );
@@ -844,6 +849,214 @@ $END
     return 's="' || l_xfid || '"';
   end get_XfId;
   --
+  procedure init_defaults
+  is
+    t_ind pls_integer;
+  begin
+    if workbook.fonts.count = 0
+    then
+      t_ind := get_font( 'Calibri' );
+    end if;
+    if workbook.fills.count = 0
+    then
+      t_ind := get_fill( 'none' );
+      t_ind := get_fill( 'gray125' );
+    end if;
+    if workbook.borders.count = 0
+    then
+      t_ind := get_border( '', '', '', '' );
+    end if;
+  end init_defaults;
+  --
+  function get_style( p_name varchar2 )
+  return tp_XF_fmt
+  is
+    l_name varchar2(100) := lower( trim( substr( p_name, 1, 100 ) ) );
+  begin
+    if l_name is null or not workbook.styles.exists( l_name )
+    then
+      raise_application_error( -20100, 'as_xlsx: unknown style "' || p_name || '"' );
+    end if;
+    return workbook.styles( l_name );
+  end get_style;
+  --
+  function style_exists( p_name varchar2 )
+  return boolean
+  is
+    l_name varchar2(100) := lower( trim( substr( p_name, 1, 100 ) ) );
+  begin
+    return l_name is not null and workbook.styles.exists( l_name );
+  end style_exists;
+  --
+  procedure apply_style
+    ( p_style     varchar2
+    , p_numFmtId  in out pls_integer
+    , p_fontId    in out pls_integer
+    , p_fillId    in out pls_integer
+    , p_borderId  in out pls_integer
+    , p_alignment in out tp_alignment
+    )
+  is
+    l_st tp_XF_fmt;
+  begin
+    if p_style is null
+    then
+      return;
+    end if;
+    l_st := get_style( p_style );
+    p_numFmtId := coalesce( p_numFmtId, l_st.numFmtId );
+    p_fontId   := coalesce( p_fontId  , l_st.fontId );
+    p_fillId   := coalesce( p_fillId  , l_st.fillId );
+    p_borderId := coalesce( p_borderId, l_st.borderId );
+    p_alignment.vertical   := coalesce( p_alignment.vertical  , l_st.alignment.vertical );
+    p_alignment.horizontal := coalesce( p_alignment.horizontal, l_st.alignment.horizontal );
+    p_alignment.wrapText   := coalesce( p_alignment.wrapText  , l_st.alignment.wrapText );
+    p_alignment.rotation   := coalesce( p_alignment.rotation  , l_st.alignment.rotation );
+  end apply_style;
+  --
+  procedure set_default_font
+    ( p_name     varchar2
+    , p_fontsize number := 11
+    )
+  is
+  begin
+    init_defaults;
+    workbook.fonts( 0 ).name     := p_name;
+    workbook.fonts( 0 ).fontsize := coalesce( p_fontsize, 11 );
+  end set_default_font;
+  --
+  procedure define_style
+    ( p_name          varchar2
+    , p_base          varchar2     := null
+    , p_numFmt        varchar2     := null
+    , p_font_name     varchar2     := null
+    , p_font_size     number       := null
+    , p_bold          boolean      := null
+    , p_italic        boolean      := null
+    , p_underline     boolean      := null
+    , p_font_rgb      varchar2     := null
+    , p_fill_rgb      varchar2     := null
+    , p_border_top    varchar2     := null
+    , p_border_bottom varchar2     := null
+    , p_border_left   varchar2     := null
+    , p_border_right  varchar2     := null
+    , p_border_rgb    varchar2     := null
+    , p_alignment     tp_alignment := null
+    )
+  is
+    l_name   varchar2(100) := lower( trim( substr( p_name, 1, 100 ) ) );
+    l_st     tp_XF_fmt;
+    l_font   tp_font;
+    l_border tp_border;
+  begin
+    if l_name is null
+    then
+      raise_application_error( -20101, 'as_xlsx: a style needs a name' );
+    end if;
+    init_defaults;
+    if p_base is not null
+    then
+      l_st := get_style( p_base );
+    end if;
+    l_font := workbook.fonts( coalesce( l_st.fontId, 0 ) );
+    l_st.fontId := get_font
+                     ( p_name      => coalesce( p_font_name, l_font.name )
+                     , p_family    => coalesce( l_font.family, 2 )
+                     , p_fontsize  => coalesce( p_font_size, l_font.fontsize, 11 )
+                     , p_theme     => coalesce( l_font.theme, 1 )
+                     , p_underline => coalesce( p_underline, l_font.underline, false )
+                     , p_italic    => coalesce( p_italic, l_font.italic, false )
+                     , p_bold      => coalesce( p_bold, l_font.bold, false )
+                     , p_rgb       => upper( coalesce( p_font_rgb, l_font.rgb ) )
+                     );
+    if p_fill_rgb is not null
+    then
+      l_st.fillId := get_fill( 'solid', p_fill_rgb );
+    end if;
+    if coalesce( p_border_top, p_border_bottom, p_border_left, p_border_right, p_border_rgb ) is not null
+    then
+      if l_st.borderId is not null
+      then
+        l_border := workbook.borders( l_st.borderId );
+      end if;
+      l_st.borderId := get_border
+                         ( p_top    => coalesce( p_border_top   , l_border.top )
+                         , p_bottom => coalesce( p_border_bottom, l_border.bottom )
+                         , p_left   => coalesce( p_border_left  , l_border.left )
+                         , p_right  => coalesce( p_border_right , l_border.right )
+                         , p_rgb    => upper( coalesce( p_border_rgb, l_border.rgb ) )
+                         );
+    end if;
+    if p_numFmt is not null
+    then
+      l_st.numFmtId := get_numFmt( p_numFmt );
+    end if;
+    l_st.alignment.vertical   := coalesce( p_alignment.vertical  , l_st.alignment.vertical );
+    l_st.alignment.horizontal := coalesce( p_alignment.horizontal, l_st.alignment.horizontal );
+    l_st.alignment.wrapText   := coalesce( p_alignment.wrapText  , l_st.alignment.wrapText );
+    l_st.alignment.rotation   := coalesce( p_alignment.rotation  , l_st.alignment.rotation );
+    workbook.styles( l_name ) := l_st;
+  end define_style;
+  --
+  procedure use_template
+    ( p_font        varchar2 := 'Hack'
+    , p_fontsize    number   := 8
+    , p_accent      varchar2 := 'FF2F4F6F'
+    , p_zebra       varchar2 := 'FFF2F4F7'
+    , p_line        varchar2 := 'FFD0D5DD'
+    , p_muted       varchar2 := 'FF6B7280'
+    , p_currency    varchar2 := 'CHF'
+    , p_date_format varchar2 := 'dd.mm.yyyy'
+    )
+  is
+    l_size     number := coalesce( p_fontsize, 8 );
+    l_currency varchar2(100);
+  begin
+    set_default_font( coalesce( p_font, 'Hack' ), l_size );
+    workbook.accent := upper( p_accent );
+    workbook.zebra_fillId := case when p_zebra is not null then get_fill( 'solid', p_zebra ) end;
+    -- escape every character of the currency, so letters like H or M are not read as date codes
+    for i in 1 .. length( p_currency )
+    loop
+      l_currency := l_currency || '\' || substr( p_currency, i, 1 );
+    end loop;
+    define_style( 'titel', p_font_size => l_size + 4, p_bold => true, p_font_rgb => p_accent );
+    define_style( 'untertitel', p_italic => true, p_font_rgb => p_muted );
+    define_style( 'header'
+                , p_bold => true
+                , p_font_rgb => 'FFFFFFFF'
+                , p_fill_rgb => p_accent
+                , p_border_bottom => 'medium'
+                , p_border_rgb => p_accent
+                , p_alignment => get_alignment( p_vertical => 'center', p_wrapText => true )
+                );
+    define_style( 'text', p_border_bottom => 'thin', p_border_rgb => p_line );
+    define_style( 'ganzzahl', p_base => 'text', p_numFmt => '#,##0' );
+    define_style( 'zahl', p_base => 'text', p_numFmt => '#,##0.00' );
+    define_style( 'betrag', p_base => 'text', p_numFmt => case when l_currency is not null then l_currency || ' ' end || '#,##0.00' );
+    define_style( 'prozent', p_base => 'text', p_numFmt => '0.0%' );
+    define_style( 'datum', p_base => 'text', p_numFmt => coalesce( p_date_format, 'dd.mm.yyyy' )
+                , p_alignment => get_alignment( p_horizontal => 'center' ) );
+    define_style( 'datum_zeit', p_base => 'text', p_numFmt => coalesce( p_date_format, 'dd.mm.yyyy' ) || ' hh:mm' );
+    define_style( 'summe', p_bold => true, p_border_top => 'thin', p_border_bottom => 'double', p_border_rgb => p_accent );
+    define_style( 'hinweis', p_font_size => greatest( l_size - 1, 6 ), p_italic => true, p_font_rgb => p_muted );
+  end use_template;
+  --
+  function get_style_xfid
+    ( p_name  varchar2
+    , p_zebra boolean := false
+    )
+  return pls_integer
+  is
+    l_st tp_XF_fmt := get_style( p_name );
+  begin
+    if p_zebra and l_st.fillId is null and workbook.zebra_fillId is not null
+    then
+      l_st.fillId := workbook.zebra_fillId;
+    end if;
+    return coalesce( get_xfid( l_st.numFmtId, l_st.fontId, l_st.fillId, l_st.borderId, l_st.alignment ), 0 );
+  end get_style_xfid;
+  --
   procedure cell
     ( p_col   pls_integer
     , p_row   pls_integer
@@ -855,14 +1068,24 @@ $END
     , p_alignment tp_alignment := null
     , p_sheet     pls_integer  := null
     , p_xfId      pls_integer  := null
+    , p_style     varchar2     := null
     )
   is
-    t_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
+    t_sheet     pls_integer  := nvl( p_sheet, workbook.sheets.count );
+    l_numFmtId  pls_integer  := p_numFmtId;
+    l_fontId    pls_integer  := p_fontId;
+    l_fillId    pls_integer  := p_fillId;
+    l_borderId  pls_integer  := p_borderId;
+    l_alignment tp_alignment := p_alignment;
   begin
+    if p_xfid is null
+    then
+      apply_style( p_style, l_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
+    end if;
     workbook.sheets( t_sheet ).rows( p_row )( p_col ).value := p_value;
     workbook.sheets( t_sheet ).rows( p_row )( p_col ).style :=
       case when p_xfid is null
-        then get_XfId( t_sheet, p_col, p_row, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment )
+        then get_XfId( t_sheet, p_col, p_row, l_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment )
         else 's="' || p_xfid || '"'
       end;
   end;
@@ -895,11 +1118,20 @@ $END
     , p_alignment tp_alignment := null
     , p_sheet     pls_integer  := null
     , p_xfId      pls_integer  := null
+    , p_style     varchar2     := null
     )
   is
     t_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
     t_alignment tp_alignment := p_alignment;
+    l_numFmtId  pls_integer  := p_numFmtId;
+    l_fontId    pls_integer  := p_fontId;
+    l_fillId    pls_integer  := p_fillId;
+    l_borderId  pls_integer  := p_borderId;
   begin
+    if p_xfid is null
+    then
+      apply_style( p_style, l_numFmtId, l_fontId, l_fillId, l_borderId, t_alignment );
+    end if;
     workbook.sheets( t_sheet ).rows( p_row )( p_col ).value := add_string( p_value );
     if t_alignment.wrapText is null and instr( p_value, chr(13) ) > 0
     then
@@ -907,7 +1139,7 @@ $END
     end if;
     workbook.sheets( t_sheet ).rows( p_row )( p_col ).style := 't="s" ' ||
       case when p_xfid is null
-        then get_XfId( t_sheet, p_col, p_row, p_numFmtId, p_fontId, p_fillId, p_borderId, t_alignment )
+        then get_XfId( t_sheet, p_col, p_row, l_numFmtId, l_fontId, l_fillId, l_borderId, t_alignment )
         else 's="' || p_xfid || '"'
       end;
   end;
@@ -923,13 +1155,22 @@ $END
     , p_alignment tp_alignment := null
     , p_sheet     pls_integer  := null
     , p_xfId      pls_integer  := null
+    , p_style     varchar2     := null
     )
   is
     t_xfId     varchar2(100);
     t_numFmtId pls_integer := p_numFmtId;
     t_sheet    pls_integer := nvl( p_sheet, workbook.sheets.count );
     t_tmp      number;
+    l_fontId    pls_integer  := p_fontId;
+    l_fillId    pls_integer  := p_fillId;
+    l_borderId  pls_integer  := p_borderId;
+    l_alignment tp_alignment := p_alignment;
   begin
+    if p_xfid is null
+    then
+      apply_style( p_style, t_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
+    end if;
     t_tmp := p_value - date '1900-03-01';
     t_tmp := t_tmp + case when t_tmp < 0 then 60 else 61 end;
     workbook.sheets( t_sheet ).rows( p_row )( p_col ).value := t_tmp;
@@ -945,7 +1186,7 @@ $END
       then
         t_numFmtId := get_numFmt( 'dd/mm/yyyy' );
       end if;
-      t_xfId := get_XfId( t_sheet, p_col, p_row, t_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment );
+      t_xfId := get_XfId( t_sheet, p_col, p_row, t_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
     else
       t_xfId := 's="' || p_xfid || '"';
     end if;
@@ -964,11 +1205,12 @@ $END
     , p_alignment     tp_alignment := null
     , p_sheet         pls_integer  := null
     , p_xfId          pls_integer  := null
+    , p_style         varchar2     := null
     )
   is
     l_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
   begin
-    cell( p_col, p_row, p_default_value, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment, l_sheet, p_xfId );
+    cell( p_col, p_row, p_default_value, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment, l_sheet, p_xfId, p_style );
     workbook.sheets( l_sheet ).rows( p_row )( p_col ).formula := '<f>' || p_formula || '</f>';
   end num_formula;
   --
@@ -984,11 +1226,12 @@ $END
     , p_alignment     tp_alignment := null
     , p_sheet         pls_integer  := null
     , p_xfId          pls_integer  := null
+    , p_style         varchar2     := null
     )
   is
     l_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
   begin
-    cell( p_col, p_row, p_default_value, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment, l_sheet, p_xfId );
+    cell( p_col, p_row, p_default_value, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment, l_sheet, p_xfId, p_style );
     workbook.sheets( l_sheet ).rows( p_row )( p_col ).formula := '<f>' || p_formula || '</f>';
   end str_formula;
   --
@@ -1004,11 +1247,12 @@ $END
     , p_alignment     tp_alignment := null
     , p_sheet         pls_integer  := null
     , p_xfId          pls_integer  := null
+    , p_style         varchar2     := null
     )
   is
     l_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
   begin
-    cell( p_col, p_row, p_default_value, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment, l_sheet, p_xfId );
+    cell( p_col, p_row, p_default_value, p_numFmtId, p_fontId, p_fillId, p_borderId, p_alignment, l_sheet, p_xfId, p_style );
     workbook.sheets( l_sheet ).rows( p_row )( p_col ).formula := '<f>' || p_formula || '</f>';
   end date_formula;
   --
@@ -1034,15 +1278,35 @@ $END
     , p_sheet pls_integer := null
     , p_location varchar2 := null
     , p_tooltip varchar2 := null
+    , p_style varchar2 := null
     )
   is
     t_ind pls_integer;
     t_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
+    l_numFmtId  pls_integer;
+    l_fontId    pls_integer;
+    l_fillId    pls_integer;
+    l_borderId  pls_integer;
+    l_alignment tp_alignment;
   begin
     if p_url is not null or p_location is not null
     then
       workbook.sheets( t_sheet ).rows( p_row )( p_col ).value := add_string( coalesce( p_value, p_url, p_location ) );
-      workbook.sheets( t_sheet ).rows( p_row )( p_col ).style := 't="s" ' || get_XfId( t_sheet, p_col, p_row, '', get_font( 'Calibri', p_theme => 10, p_underline => true ) );
+      if p_style is not null
+      then
+        apply_style( p_style, l_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
+        workbook.sheets( t_sheet ).rows( p_row )( p_col ).style := 't="s" ' ||
+          get_XfId( t_sheet, p_col, p_row, l_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
+      else
+        workbook.sheets( t_sheet ).rows( p_row )( p_col ).style := 't="s" ' ||
+          get_XfId( t_sheet, p_col, p_row, ''
+                  , get_font( workbook.fonts( 0 ).name
+                            , p_fontsize  => workbook.fonts( 0 ).fontsize
+                            , p_theme     => 10
+                            , p_underline => true
+                            )
+                  );
+      end if;
       t_ind := workbook.sheets( t_sheet ).hyperlinks.count + 1;
       workbook.sheets( t_sheet ).hyperlinks( t_ind ).cell := alfan_col( p_col ) || p_row;
       workbook.sheets( t_sheet ).hyperlinks( t_ind ).url := p_url;
@@ -1213,15 +1477,22 @@ $END
     , p_borderId pls_integer := null
     , p_alignment tp_alignment := null
     , p_sheet pls_integer := null
+    , p_style varchar2 := null
     )
   is
     t_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
+    l_numFmtId  pls_integer  := p_numFmtId;
+    l_fontId    pls_integer  := p_fontId;
+    l_fillId    pls_integer  := p_fillId;
+    l_borderId  pls_integer  := p_borderId;
+    l_alignment tp_alignment := p_alignment;
   begin
-    workbook.sheets( t_sheet ).col_fmts( p_col ).numFmtId := p_numFmtId;
-    workbook.sheets( t_sheet ).col_fmts( p_col ).fontId := p_fontId;
-    workbook.sheets( t_sheet ).col_fmts( p_col ).fillId := p_fillId;
-    workbook.sheets( t_sheet ).col_fmts( p_col ).borderId := p_borderId;
-    workbook.sheets( t_sheet ).col_fmts( p_col ).alignment := p_alignment;
+    apply_style( p_style, l_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
+    workbook.sheets( t_sheet ).col_fmts( p_col ).numFmtId := l_numFmtId;
+    workbook.sheets( t_sheet ).col_fmts( p_col ).fontId := l_fontId;
+    workbook.sheets( t_sheet ).col_fmts( p_col ).fillId := l_fillId;
+    workbook.sheets( t_sheet ).col_fmts( p_col ).borderId := l_borderId;
+    workbook.sheets( t_sheet ).col_fmts( p_col ).alignment := l_alignment;
   end;
 --
   procedure set_row
@@ -1233,16 +1504,23 @@ $END
     , p_alignment tp_alignment := null
     , p_sheet pls_integer := null
     , p_height number := null
+    , p_style varchar2 := null
     )
   is
     t_sheet pls_integer := nvl( p_sheet, workbook.sheets.count );
     t_cells tp_cells;
+    l_numFmtId  pls_integer  := p_numFmtId;
+    l_fontId    pls_integer  := p_fontId;
+    l_fillId    pls_integer  := p_fillId;
+    l_borderId  pls_integer  := p_borderId;
+    l_alignment tp_alignment := p_alignment;
   begin
-    workbook.sheets( t_sheet ).row_fmts( p_row ).numFmtId := p_numFmtId;
-    workbook.sheets( t_sheet ).row_fmts( p_row ).fontId := p_fontId;
-    workbook.sheets( t_sheet ).row_fmts( p_row ).fillId := p_fillId;
-    workbook.sheets( t_sheet ).row_fmts( p_row ).borderId := p_borderId;
-    workbook.sheets( t_sheet ).row_fmts( p_row ).alignment := p_alignment;
+    apply_style( p_style, l_numFmtId, l_fontId, l_fillId, l_borderId, l_alignment );
+    workbook.sheets( t_sheet ).row_fmts( p_row ).numFmtId := l_numFmtId;
+    workbook.sheets( t_sheet ).row_fmts( p_row ).fontId := l_fontId;
+    workbook.sheets( t_sheet ).row_fmts( p_row ).fillId := l_fillId;
+    workbook.sheets( t_sheet ).row_fmts( p_row ).borderId := l_borderId;
+    workbook.sheets( t_sheet ).row_fmts( p_row ).alignment := l_alignment;
     workbook.sheets( t_sheet ).row_fmts( p_row ).height := trunc( p_height * 4 / 3 ) * 3 / 4;
     if not workbook.sheets( t_sheet ).rows.exists( p_row )
     then
@@ -2665,6 +2943,9 @@ $END
     , p_row            pls_integer
     , p_autofilter     boolean
     , p_table_style    varchar2
+    , p_styled         boolean
+    , p_sum_columns    varchar2
+    , p_col_styles     varchar2
     )
   return number
   is
@@ -2687,6 +2968,63 @@ $END
     l_horizontal varchar2(3999);
     l_right       boolean;
     l_center_cont boolean;
+    -- styled export
+    type tp_names is table of varchar2(100) index by pls_integer;
+    type tp_ints  is table of pls_integer index by pls_integer;
+    type tp_nums  is table of number index by pls_integer;
+    type tp_flags is table of boolean index by pls_integer;
+    type tp_map   is table of varchar2(100) index by varchar2(128);
+    l_styled      boolean := coalesce( p_styled, false );
+    l_title_xfid  pls_integer := p_title_xfid;
+    l_col_style   tp_names;
+    l_xf          tp_ints;
+    l_xf_zebra    tp_ints;
+    l_is_num      tp_flags;
+    l_is_date     tp_flags;
+    l_sum         tp_flags;
+    l_sum_val     tp_nums;
+    l_max_abs     tp_nums;
+    l_has_neg     tp_flags;
+    l_max_len     tp_ints;
+    l_col_styles  tp_map;
+    l_sum_cols    tp_map;
+    l_item        varchar2(32767);
+    l_cname       varchar2(128);
+    l_first_data  pls_integer;
+    l_hdr         tp_XF_fmt;
+    l_st          tp_XF_fmt;
+    l_sum_st      tp_XF_fmt;
+    l_xfid        pls_integer;
+    l_style       varchar2(100);
+    l_fmt         varchar2(1000);
+    l_width       number;
+    --
+    function num_width( p_n number, p_fmt varchar2, p_neg boolean )
+    return pls_integer
+    is
+      l_int pls_integer := length( to_char( trunc( abs( p_n ) ) ) );
+      l_w   pls_integer;
+    begin
+      if p_fmt is null
+      then
+        return length( to_char( p_n, 'TM9', 'NLS_NUMERIC_CHARACTERS=.,' ) ) + case when p_neg then 1 else 0 end;
+      end if;
+      l_w := l_int;
+      if instr( p_fmt, ',' ) > 0
+      then
+        l_w := l_w + trunc( ( l_int - 1 ) / 3 );
+      end if;
+      if instr( p_fmt, '.' ) > 0
+      then
+        l_w := l_w + 1 + coalesce( length( regexp_substr( p_fmt, '\.(0+)', 1, 1, null, 1 ) ), 0 );
+      end if;
+      if instr( p_fmt, '%' ) > 0
+      then
+        l_w := l_w + 3;
+      end if;
+      l_w := l_w + regexp_count( p_fmt, '\\' ) + regexp_count( p_fmt, ' ' );
+      return l_w + case when p_neg then 1 else 0 end;
+    end num_width;
   begin
     if p_sheet is null
     then
@@ -2694,14 +3032,50 @@ $END
     end if;
     t_sheet := coalesce( p_sheet, workbook.sheets.count );
     setUseXf( true );
+    if l_styled
+    then
+      if not style_exists( 'text' )
+      then
+        use_template;
+      end if;
+      if l_title_xfid is null and p_title is not null
+      then
+        l_title_xfid := get_style_xfid( 'titel' );
+      end if;
+      for i in 1 .. coalesce( regexp_count( p_col_styles, '[^,]+' ), 0 )
+      loop
+        l_item := regexp_substr( p_col_styles, '[^,]+', 1, i );
+        if instr( l_item, '=' ) > 1
+        then
+          l_col_styles( substr( upper( trim( substr( l_item, 1, instr( l_item, '=' ) - 1 ) ) ), 1, 128 ) ) :=
+            substr( lower( trim( substr( l_item, instr( l_item, '=' ) + 1 ) ) ), 1, 100 );
+        end if;
+      end loop;
+      for i in 1 .. coalesce( regexp_count( p_sum_columns, '[^,]+' ), 0 )
+      loop
+        l_item := upper( trim( regexp_substr( p_sum_columns, '[^,]+', 1, i ) ) );
+        if l_item is not null
+        then
+          l_sum_cols( substr( l_item, 1, 128 ) ) := 'Y';
+        end if;
+      end loop;
+      if p_sheet is null
+      then
+        workbook.sheets( t_sheet ).show_gridlines := false;
+        if workbook.sheets( t_sheet ).tabcolor is null
+        then
+          workbook.sheets( t_sheet ).tabcolor := workbook.accent;
+        end if;
+      end if;
+    end if;
     t_col := coalesce( p_col, 1 ) - 1;
     t_cur_row := coalesce( p_row, 1 );
     if p_title is not null
     then
       t_cur_row := t_cur_row + 1;
-      if p_title_xfid is not null and workbook.cellXfs.exists( p_title_xfid )
+      if l_title_xfid is not null and workbook.cellXfs.exists( l_title_xfid )
       then
-        l_horizontal := lower( workbook.cellXfs( p_title_xfid ).alignment.horizontal );
+        l_horizontal := lower( workbook.cellXfs( l_title_xfid ).alignment.horizontal );
         l_right := l_horizontal = 'right';
         l_center_cont := l_horizontal = 'centercontinuous';
       end if;
@@ -2716,14 +3090,14 @@ $END
         if ( c = 1 and not l_right ) or ( c = t_col_cnt and l_right )
         then
           cell( t_col + c, t_cur_row - 1, p_title, p_sheet => t_sheet );
-          if p_title_xfid is not null
+          if l_title_xfid is not null
           then
-            workbook.sheets( t_sheet ).rows( t_cur_row - 1 )( t_col + c ).style := 't="s" s="' || p_title_xfid || '"';
+            workbook.sheets( t_sheet ).rows( t_cur_row - 1 )( t_col + c ).style := 't="s" s="' || l_title_xfid || '"';
           end if;
         elsif l_center_cont
         then
           cell( t_col + c, t_cur_row - 1, t_null_number, p_sheet => t_sheet );
-          workbook.sheets( t_sheet ).rows( t_cur_row - 1 )( t_col + c ).style := 's="' || p_title_xfid || '"';
+          workbook.sheets( t_sheet ).rows( t_cur_row - 1 )( t_col + c ).style := 's="' || l_title_xfid || '"';
         end if;
       end if;
       if p_column_headers
@@ -2744,12 +3118,60 @@ $END
         else
           null;
       end case;
+      if l_styled
+      then
+        l_cname := substr( upper( t_desc_tab( c ).col_name ), 1, 128 );
+        l_is_num( c )  := t_desc_tab( c ).col_type in ( 2, 100, 101 );
+        l_is_date( c ) := t_desc_tab( c ).col_type in ( 12, 178, 179, 180, 181, 231 );
+        if l_col_styles.exists( l_cname )
+        then
+          l_col_style( c ) := l_col_styles( l_cname );
+        elsif l_is_num( c )
+        then
+          l_col_style( c ) := case
+                                when t_desc_tab( c ).col_precision > 0 and t_desc_tab( c ).col_scale > 0 then 'zahl'
+                                when t_desc_tab( c ).col_precision > 0 and t_desc_tab( c ).col_scale = 0 then 'ganzzahl'
+                                else 'text'
+                              end;
+        elsif t_desc_tab( c ).col_type = 12
+        then
+          l_col_style( c ) := 'datum';
+        elsif l_is_date( c )
+        then
+          l_col_style( c ) := 'datum_zeit';
+        else
+          l_col_style( c ) := 'text';
+        end if;
+        l_xf( c )       := get_style_xfid( l_col_style( c ) );
+        l_xf_zebra( c ) := get_style_xfid( l_col_style( c ), true );
+        l_sum( c )      := l_is_num( c ) and ( l_sum_cols.exists( 'ALL' ) or l_sum_cols.exists( l_cname ) );
+        l_sum_val( c )  := 0;
+        l_max_abs( c )  := 0;
+        l_has_neg( c )  := false;
+        l_max_len( c )  := case when p_column_headers then length( t_desc_tab( c ).col_name ) + 1 else 0 end;
+        if p_column_headers
+        then
+          l_hdr := get_style( 'header' );
+          l_hdr.alignment.horizontal := case
+                                          when l_is_num( c )  then 'right'
+                                          when l_is_date( c ) then 'center'
+                                          else l_hdr.alignment.horizontal
+                                        end;
+          workbook.sheets( t_sheet ).rows( t_cur_row )( t_col + c ).style :=
+            't="s" s="' || coalesce( get_xfid( l_hdr.numFmtId, l_hdr.fontId, l_hdr.fillId, l_hdr.borderId, l_hdr.alignment ), 0 ) || '"';
+        end if;
+      end if;
     end loop;
     --
     setUseXf( p_UseXf );
     if p_column_headers
     then
       t_cur_row := t_cur_row + 1;
+    end if;
+    l_first_data := t_cur_row;
+    if l_styled
+    then
+      setUseXf( false ); -- styles are set below, skip the per cell lookup
     end if;
     --
     l_rows := 0;
@@ -2768,6 +3190,12 @@ $END
                 if n_tab( i + n_tab.first ) is not null
                 then
                   cell( t_col + c, t_cur_row + i, n_tab( i + n_tab.first ), p_sheet => t_sheet );
+                  if l_styled
+                  then
+                    l_sum_val( c ) := l_sum_val( c ) + n_tab( i + n_tab.first );
+                    l_max_abs( c ) := greatest( l_max_abs( c ), abs( n_tab( i + n_tab.first ) ) );
+                    l_has_neg( c ) := l_has_neg( c ) or n_tab( i + n_tab.first ) < 0;
+                  end if;
                 else
                   cell( t_col + c, t_cur_row + i, t_null_number, p_sheet => t_sheet );
                 end if;
@@ -2799,6 +3227,10 @@ $END
                 if v_tab( i + v_tab.first ) is not null
                 then
                   cell( t_col + c, t_cur_row + i, v_tab( i + v_tab.first ), p_sheet => t_sheet );
+                  if l_styled
+                  then
+                    l_max_len( c ) := greatest( l_max_len( c ), length( v_tab( i + v_tab.first ) ) );
+                  end if;
                 else
                   cell( t_col + c, t_cur_row + i, t_null_number, p_sheet => t_sheet );
                 end if;
@@ -2807,6 +3239,20 @@ $END
             else
               null;
           end case;
+          if l_styled
+          then
+            for i in 0 .. t_r - 1
+            loop
+              if workbook.sheets( t_sheet ).rows( t_cur_row + i ).exists( t_col + c )
+              then
+                workbook.sheets( t_sheet ).rows( t_cur_row + i )( t_col + c ).style :=
+                  case when workbook.sheets( t_sheet ).rows( t_cur_row + i )( t_col + c ).style like 't="s"%' then 't="s" ' end ||
+                  's="' ||
+                  case when mod( t_cur_row + i - l_first_data, 2 ) = 1 then l_xf_zebra( c ) else l_xf( c ) end ||
+                  '"';
+              end if;
+            end loop;
+          end if;
         end loop;
       end if;
       l_rows := l_rows + t_r;
@@ -2815,7 +3261,68 @@ $END
     end loop;
     dbms_sql.close_cursor( p_c );
     --
-    if p_autofilter and p_table_style is null and p_column_headers
+    if l_styled
+    then
+      setUseXf( true );
+      l_sum_st := get_style( 'summe' );
+      for c in 1 .. t_col_cnt
+      loop
+        if l_sum( c ) and l_rows > 0
+        then
+          l_sum_cols( '#ROW' ) := 'Y';
+        end if;
+      end loop;
+      for c in 1 .. t_col_cnt
+      loop
+        exit when not l_sum_cols.exists( '#ROW' );
+        l_st := get_style( l_col_style( c ) );
+        if l_sum( c )
+        then
+          l_xfid := get_xfid( l_st.numFmtId, l_sum_st.fontId, l_sum_st.fillId, l_sum_st.borderId, l_st.alignment );
+          num_formula( t_col + c, t_cur_row
+                     , 'SUBTOTAL(9,' || alfan_col( t_col + c ) || l_first_data || ':' || alfan_col( t_col + c ) || ( t_cur_row - 1 ) || ')'
+                     , l_sum_val( c )
+                     , p_sheet => t_sheet
+                     , p_xfId  => coalesce( l_xfid, 0 )
+                     );
+          l_max_abs( c ) := greatest( l_max_abs( c ), abs( l_sum_val( c ) ) );
+        else
+          l_xfid := get_xfid( null, l_sum_st.fontId, l_sum_st.fillId, l_sum_st.borderId, l_sum_st.alignment );
+          if c = 1
+          then
+            cell( t_col + c, t_cur_row, 'Total', p_sheet => t_sheet, p_xfId => coalesce( l_xfid, 0 ) );
+            l_max_len( c ) := greatest( l_max_len( c ), 5 );
+          else
+            cell( t_col + c, t_cur_row, t_null_number, p_sheet => t_sheet, p_xfId => coalesce( l_xfid, 0 ) );
+          end if;
+        end if;
+      end loop;
+      --
+      for c in 1 .. t_col_cnt
+      loop
+        if not workbook.sheets( t_sheet ).widths.exists( t_col + c )
+        then
+          l_st := get_style( l_col_style( c ) );
+          l_fmt := case when l_st.numFmtId is not null then workbook.numFmts( workbook.numFmtIndexes( l_st.numFmtId ) ).formatCode end;
+          if l_is_num( c )
+          then
+            l_max_len( c ) := greatest( l_max_len( c ), num_width( l_max_abs( c ), l_fmt, l_has_neg( c ) ) );
+          elsif l_is_date( c )
+          then
+            l_max_len( c ) := greatest( l_max_len( c ), coalesce( length( translate( l_fmt, 'a\"', 'a' ) ), 10 ) );
+          end if;
+          l_width := least( greatest( l_max_len( c ) + 2, 6 ), 60 );
+          set_column_width( t_col + c, l_width, t_sheet );
+        end if;
+      end loop;
+      --
+      if p_column_headers
+      then
+        freeze_rows( l_first_data - 1, t_sheet );
+      end if;
+    end if;
+    --
+    if coalesce( p_autofilter, l_styled ) and p_table_style is null and p_column_headers
     then
       set_autofilter
         ( p_column_start => t_col + 1
@@ -2853,6 +3360,10 @@ $END
         dbms_sql.close_cursor( p_c );
       end if;
       setUseXf( t_useXf );
+      if sqlcode between -20199 and -20100
+      then
+        raise; -- style errors
+      end if;
       return null;
   end query2sheet;
   --
@@ -2870,6 +3381,9 @@ $END
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     )
   return number
   is
@@ -2893,6 +3407,9 @@ $END
              , p_row            => p_row
              , p_autofilter     => p_autofilter
              , p_table_style    => p_table_style
+             , p_styled         => p_styled
+             , p_sum_columns    => p_sum_columns
+             , p_col_styles     => p_col_styles
              );
   end;
   --
@@ -2910,6 +3427,9 @@ $END
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     )
   return number
   is
@@ -2931,6 +3451,9 @@ $END
              , p_row            => p_row
              , p_autofilter     => p_autofilter
              , p_table_style    => p_table_style
+             , p_styled         => p_styled
+             , p_sum_columns    => p_sum_columns
+             , p_col_styles     => p_col_styles
              );
   end;
   --
@@ -2948,6 +3471,9 @@ $END
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     )
   is
     l_dummy number;
@@ -2966,6 +3492,9 @@ $END
                  , p_row            => p_row
                  , p_autofilter     => p_autofilter
                  , p_table_style    => p_table_style
+                 , p_styled         => p_styled
+                 , p_sum_columns    => p_sum_columns
+                 , p_col_styles     => p_col_styles
                  );
   end;
 --
@@ -2983,6 +3512,9 @@ $END
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     )
   is
     l_dummy number;
@@ -3001,6 +3533,9 @@ $END
                  , p_row            => p_row
                  , p_autofilter     => p_autofilter
                  , p_table_style    => p_table_style
+                 , p_styled         => p_styled
+                 , p_sum_columns    => p_sum_columns
+                 , p_col_styles     => p_col_styles
                  );
   end;
   --
