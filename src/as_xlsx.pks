@@ -97,6 +97,10 @@ is
 **       possible values for p_theme: 2023, 2013 or 2007
 **   Date: 18-07-2026
 **     Added parameter p_handle_invalid_1900_02_29 to function read
+**   Date: 05-11-2026
+**     Added named styles: set_default_font, define_style, use_template,
+**       get_style_xfid, style_exists and p_style parameters
+**     Added p_styled, p_sum_columns and p_col_styles to query2sheet
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2011, 2025 by Anton Scheffer
@@ -266,6 +270,67 @@ top
     )
   return pls_integer;
   --
+/*
+  Named styles
+  ------------
+  A named style bundles font, fill, border, number format and alignment.
+  Use it with p_style => '<name>' in cell, hyperlink, num_formula, str_formula,
+  date_formula, set_column and set_row. Explicit p_numFmtId, p_fontId, p_fillId,
+  p_borderId and p_alignment values override the style.
+  Style names are case insensitive.
+  Call use_template and/or set_default_font right after clear_workbook,
+  before any cells are written.
+*/
+  procedure set_default_font
+    ( p_name     varchar2
+    , p_fontsize number := 11
+    );
+  --
+  procedure define_style
+    ( p_name          varchar2
+    , p_base          varchar2     := null -- start from an existing style
+    , p_numFmt        varchar2     := null -- Excel format code, e.g. '#,##0.00'
+    , p_font_name     varchar2     := null -- default: workbook default font
+    , p_font_size     number       := null
+    , p_bold          boolean      := null
+    , p_italic        boolean      := null
+    , p_underline     boolean      := null
+    , p_font_rgb      varchar2     := null -- hex ALPHA Red Green Blue, e.g. 'FF2F4F6F'
+    , p_fill_rgb      varchar2     := null -- solid fill
+    , p_border_top    varchar2     := null -- thin, medium, double, ... (see get_border)
+    , p_border_bottom varchar2     := null
+    , p_border_left   varchar2     := null
+    , p_border_right  varchar2     := null
+    , p_border_rgb    varchar2     := null
+    , p_alignment     tp_alignment := null
+    );
+  --
+/*
+  use_template sets the default font and defines these styles:
+    titel, untertitel, header, text, ganzzahl, zahl, betrag, prozent,
+    datum, datum_zeit, summe, hinweis
+  p_zebra is the fill used for every second data row by query2sheet( p_styled => true )
+*/
+  procedure use_template
+    ( p_font        varchar2 := 'Hack'
+    , p_fontsize    number   := 8
+    , p_accent      varchar2 := 'FF2F4F6F'
+    , p_zebra       varchar2 := 'FFF2F4F7'
+    , p_line        varchar2 := 'FFD0D5DD'
+    , p_muted       varchar2 := 'FF6B7280'
+    , p_currency    varchar2 := 'CHF'
+    , p_date_format varchar2 := 'dd.mm.yyyy'
+    );
+  --
+  function style_exists( p_name varchar2 )
+  return boolean;
+  --
+  function get_style_xfid
+    ( p_name  varchar2
+    , p_zebra boolean := false
+    )
+  return pls_integer;
+  --
   procedure cell
     ( p_col   pls_integer
     , p_row   pls_integer
@@ -277,6 +342,7 @@ top
     , p_alignment tp_alignment := null
     , p_sheet     pls_integer  := null
     , p_xfId      pls_integer  := null
+    , p_style     varchar2     := null
     );
 --
   procedure cell
@@ -290,6 +356,7 @@ top
     , p_alignment tp_alignment := null
     , p_sheet     pls_integer  := null
     , p_xfId      pls_integer  := null
+    , p_style     varchar2     := null
     );
 --
   procedure cell
@@ -303,6 +370,7 @@ top
     , p_alignment tp_alignment := null
     , p_sheet     pls_integer  := null
     , p_xfId      pls_integer  := null
+    , p_style     varchar2     := null
     );
 --
   procedure hyperlink
@@ -313,6 +381,7 @@ top
     , p_sheet pls_integer := null
     , p_location varchar2 := null
     , p_tooltip varchar2 := null
+    , p_style varchar2 := null
     );
   --
   procedure num_formula
@@ -327,6 +396,7 @@ top
     , p_alignment     tp_alignment := null
     , p_sheet         pls_integer  := null
     , p_xfId          pls_integer  := null
+    , p_style         varchar2     := null
     );
   --
   procedure str_formula
@@ -341,6 +411,7 @@ top
     , p_alignment     tp_alignment := null
     , p_sheet         pls_integer  := null
     , p_xfId          pls_integer  := null
+    , p_style         varchar2     := null
     );
   --
   procedure date_formula
@@ -355,6 +426,7 @@ top
     , p_alignment     tp_alignment := null
     , p_sheet         pls_integer  := null
     , p_xfId          pls_integer  := null
+    , p_style         varchar2     := null
     );
   --
   procedure comment
@@ -428,6 +500,7 @@ top
     , p_borderId pls_integer := null
     , p_alignment tp_alignment := null
     , p_sheet pls_integer := null
+    , p_style varchar2 := null
     );
 --
   procedure set_row
@@ -439,6 +512,7 @@ top
     , p_alignment tp_alignment := null
     , p_sheet pls_integer := null
     , p_height number := null
+    , p_style varchar2 := null
     );
 --
   procedure freeze_rows
@@ -522,6 +596,9 @@ top
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     );
   --
   procedure query2sheet
@@ -538,8 +615,19 @@ top
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     );
   --
+/*
+  query2sheet with p_styled => true
+    - uses the named styles (use_template is applied if no styles are defined)
+    - header row, zebra rows, column widths, frozen header and autofilter
+    - p_col_styles  : 'COLUMN=style, COLUMN2=style2' overrides the style per column
+    - p_sum_columns : 'COLUMN, COLUMN2' or 'ALL' (all numeric columns) adds a total
+                      row with =SUBTOTAL(9, ...) formulas
+*/
   function query2sheet
     ( p_sql            varchar2
     , p_column_headers boolean     := true
@@ -554,6 +642,9 @@ top
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     )
   return number;  -- number of records returned by the query
   --
@@ -571,6 +662,9 @@ top
     , p_row            pls_integer := null
     , p_autofilter     boolean     := null
     , p_table_style    varchar2    := null
+    , p_styled         boolean     := null
+    , p_sum_columns    varchar2    := null
+    , p_col_styles     varchar2    := null
     )
   return number;  -- number of records returned by the query
   --

@@ -173,3 +173,72 @@ begin
 end;
 ~~~
 
+## Named styles
+
+`use_template` sets the workbook default font (Hack 8) and defines these styles:
+`titel`, `untertitel`, `header`, `text`, `ganzzahl`, `zahl`, `betrag`, `prozent`,
+`datum`, `datum_zeit`, `summe`, `hinweis`.
+Call it (or `set_default_font`) right after `clear_workbook`.
+
+| parameter of `use_template` | default |
+|---|---|
+| `p_font` / `p_fontsize` | `'Hack'` / `8` |
+| `p_accent` | `'FF2F4F6F'` (title, header, total lines, tab colour) |
+| `p_zebra` | `'FFF2F4F7'` (every second data row in `query2sheet`) |
+| `p_line` | `'FFD0D5DD'` (thin line under data cells) |
+| `p_muted` | `'FF6B7280'` (subtitle and notes) |
+| `p_currency` | `'CHF'` (style `betrag`) |
+| `p_date_format` | `'dd.mm.yyyy'` |
+
+`define_style` adds a style or overrides one. `p_base` starts from an existing style.
+Every procedure that writes a cell accepts `p_style`; explicit `p_numFmtId`, `p_fontId`,
+`p_fillId`, `p_borderId` and `p_alignment` still win over the style.
+~~~
+begin
+  as_xlsx.clear_workbook;
+  as_xlsx.use_template;
+  as_xlsx.define_style( 'warnung', p_base => 'text', p_bold => true, p_font_rgb => 'FFC00000', p_fill_rgb => 'FFFDECEC' );
+  as_xlsx.new_sheet( 'Styles', p_show_gridlines => false );
+  as_xlsx.cell( 1, 1, 'Monatsbericht', p_style => 'titel' );
+  as_xlsx.cell( 1, 3, 'Betrag', p_style => 'header' );
+  as_xlsx.cell( 1, 4, 1234.5, p_style => 'betrag' );
+  as_xlsx.cell( 1, 5, 99.95, p_style => 'betrag' );
+  as_xlsx.num_formula( 1, 6, 'SUM(A4:A5)', 1334.45, p_style => 'summe', p_numFmtId => as_xlsx.get_numFmt( '#,##0.00' ) );
+  as_xlsx.cell( 1, 8, 'Achtung', p_style => 'warnung' );
+  as_xlsx.cell( 2, 4, sysdate, p_style => 'datum' );
+  -- p_xfId with get_style_xfid, e.g. for a zebra row
+  as_xlsx.cell( 2, 5, sysdate, p_xfId => as_xlsx.get_style_xfid( 'datum', p_zebra => true ) );
+  as_xlsx.save( 'MY_DIR', 'styles.xlsx' );
+end;
+~~~
+
+### Styled query2sheet
+
+`p_styled => true` uses the styles for header, data, title and total row
+(`use_template` is applied if no styles exist). It also adds zebra rows, column widths,
+a frozen header row and an autofilter. On a new sheet the gridlines are hidden and
+the tab gets the accent colour.
+
+* Column style by data type: `NUMBER(p,0)` = `ganzzahl`, `NUMBER(p,s)` = `zahl`,
+  other numbers = `text`, `DATE` = `datum`, timestamps = `datum_zeit`, strings = `text`.
+* `p_col_styles => 'BETRAG=betrag, QUOTE=prozent'` overrides the style per column.
+* `p_sum_columns => 'MENGE, BETRAG'` (or `'ALL'` for every numeric column) adds a total row
+  with `=SUBTOTAL(9, ...)`, so the totals follow the autofilter.
+~~~
+declare
+  l_rows number;
+begin
+  as_xlsx.clear_workbook;
+  as_xlsx.use_template( p_accent => 'FFC00000' );
+  l_rows := as_xlsx.query2sheet
+              ( 'select level nr, cast( level * 12.5 as number(10,2) ) betrag, sysdate - level datum
+                 from dual connect by level <= 10'
+              , p_title       => 'Beispiel'
+              , p_styled      => true
+              , p_sum_columns => 'BETRAG'
+              , p_col_styles  => 'BETRAG=betrag'
+              );
+  as_xlsx.save( 'MY_DIR', 'styled.xlsx' );
+end;
+~~~
+
