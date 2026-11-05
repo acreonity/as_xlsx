@@ -34,13 +34,13 @@ Benannte Styles:
 | `summe` | 8 fett | Linie oben, Doppellinie unten | übernimmt Spaltenformat |
 | `hinweis` | 7 kursiv, grau | – | – |
 
-## 2. Geplante API (Oracle 19, bestehende Aufrufe bleiben gültig)
+## 2. API (getestet mit Oracle 21c und 23ai, bestehende Aufrufe bleiben gültig)
 
 ```sql
 begin
   as_xlsx.clear_workbook;
   -- Template laden, optional mit eigener Schrift/Farbe
-  as_xlsx.use_template( p_font => 'Hack', p_fontsize => 8, p_accent => 'FF2F4F6F' );
+  as_xlsx.use_template( p_font => 'Hack', p_fontsize => 8, p_accent => 'FF2F4F6F' );  -- = Standardwerte
   -- eigenen Style definieren oder einen Standard-Style überschreiben
   as_xlsx.define_style( 'warnung'
                       , p_font_bold => true, p_font_rgb => 'FFC00000'
