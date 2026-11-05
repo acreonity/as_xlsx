@@ -20,3 +20,12 @@ docker exec ora sqlplus xl/xl@localhost/FREEPDB1 @/src/src/as_xlsx.pks
 docker exec ora sqlplus xl/xl@localhost/FREEPDB1 @/src/src/as_xlsx.pkb
 docker exec -w /src/tests ora sqlplus xl/xl@localhost/FREEPDB1 @demo_styles.sql
 ```
+
+`query2blob` is tested from a client with a plain `select ... from dual`, the way
+SQL Developer calls it, e.g. with python-oracledb:
+
+```python
+b = cur.execute("select as_xlsx.query2blob( 'select * from dual', p_title => 'Test' ) from dual").fetchone()[0].read()
+open('test.xlsx', 'wb').write(b)
+```
+

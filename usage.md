@@ -242,3 +242,33 @@ begin
 end;
 ~~~
 
+## Save an xlsx on your own PC (SQL Developer, SQLcl, Toad)
+
+`SPOOL` only writes text, so it can't produce an xlsx. `query2blob` builds the whole
+workbook for one query and returns it as a BLOB from a plain `select ... from dual`.
+No directory object and no `UTL_FILE` rights are needed.
+~~~
+select as_xlsx.query2blob
+         ( 'select empno, ename, hiredate, sal from emp'
+         , p_title       => 'Mitarbeiter'
+         , p_sum_columns => 'SAL'
+         , p_col_styles  => 'SAL=betrag'
+         ) as xlsx
+from dual;
+~~~
+Parameters (all optional except `p_sql`): `p_title`, `p_sheetname`,
+`p_styled` (`'Y'` default, `'N'` = plain export), `p_sum_columns`, `p_col_styles`,
+`p_font` (default Hack), `p_fontsize` (default 8), `p_accent` (default `FF2F4F6F`), `p_password`.
+Quotes inside the query have to be doubled, or use the `q'[...]'` notation:
+`as_xlsx.query2blob( q'[select * from emp where job = 'CLERK']' )`.
+
+**SQL Developer**
+
+1. Run the select with *Run Statement* (Ctrl+Enter).
+2. In the *Query Result* grid, double click the `XLSX` cell (or click the pencil icon in it).
+3. In the *View Value* dialog, click *Save...* and save the file as `name.xlsx`.
+
+**Toad**: right click the BLOB cell, choose *Save to file*, name it `name.xlsx`.
+
+**SQLcl** has no file dialog: use `as_xlsx.save` to a directory on the server instead.
+

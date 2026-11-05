@@ -29,3 +29,9 @@ Details und alle Styles: [usage.md](usage.md#named-styles), Konzept und Muster:
 [docs/style-konzept.md](docs/style-konzept.md). Bestehende Aufrufe ohne Styles
 verhalten sich unverändert.
 
+### Lokal speichern (SQL Developer)
+
+`select as_xlsx.query2blob( 'select * from emp', p_title => 'Mitarbeiter' ) xlsx from dual;`
+liefert die ganze Excel-Datei als BLOB. In SQL Developer die Zelle doppelklicken und
+mit *Save...* als `.xlsx` speichern. Anleitung: [usage.md](usage.md#save-an-xlsx-on-your-own-pc-sql-developer-sqlcl-toad).
+
