@@ -11,7 +11,7 @@ Muster zum Anschauen: [`muster-template.xlsx`](muster-template.xlsx)
 
 | Element | Wert |
 |---|---|
-| Standardschrift | Arial 10 (gilt für das ganze Workbook, auch leere Zellen) |
+| Standardschrift | Hack 8, immer monospaced (gilt für das ganze Workbook, auch leere Zellen). Fehlt Hack auf einem PC, ersetzt Excel sie durch eine andere Schrift; Fallback-Empfehlung Consolas. |
 | Akzentfarbe | `#2F4F6F` (Titel, Kopfzeile, Summenlinien, Registerfarbe) |
 | Zebra-Füllung | `#F2F4F7` jede zweite Datenzeile |
 | Linien | `#D0D5DD` fein, nur unten |
@@ -21,18 +21,18 @@ Benannte Styles:
 
 | Name | Schrift | Füllung / Rahmen | Zahlformat |
 |---|---|---|---|
-| `titel` | 14 fett, Akzent | – | – |
-| `untertitel` | 10 kursiv, grau | – | – |
-| `header` | 10 fett, weiss | Akzent-Füllung, Linie unten, Umbruch | – |
-| `text` | 10 | feine Linie unten | – |
-| `ganzzahl` | 10 | feine Linie unten | `#,##0` |
-| `zahl` | 10 | feine Linie unten | `#,##0.00` |
-| `betrag` | 10 | feine Linie unten | `"CHF" #,##0.00` |
-| `prozent` | 10 | feine Linie unten | `0.0%` |
-| `datum` | 10, zentriert | feine Linie unten | `dd.mm.yyyy` |
-| `datum_zeit` | 10 | feine Linie unten | `dd.mm.yyyy hh:mm` |
-| `summe` | 10 fett | Linie oben, Doppellinie unten | übernimmt Spaltenformat |
-| `hinweis` | 9 kursiv, grau | – | – |
+| `titel` | 12 fett, Akzent | – | – |
+| `untertitel` | 8 kursiv, grau | – | – |
+| `header` | 8 fett, weiss | Akzent-Füllung, Linie unten, Umbruch | – |
+| `text` | 8 | feine Linie unten | – |
+| `ganzzahl` | 8 | feine Linie unten | `#,##0` |
+| `zahl` | 8 | feine Linie unten | `#,##0.00` |
+| `betrag` | 8 | feine Linie unten | `"CHF" #,##0.00` |
+| `prozent` | 8 | feine Linie unten | `0.0%` |
+| `datum` | 8, zentriert | feine Linie unten | `dd.mm.yyyy` |
+| `datum_zeit` | 8 | feine Linie unten | `dd.mm.yyyy hh:mm` |
+| `summe` | 8 fett | Linie oben, Doppellinie unten | übernimmt Spaltenformat |
+| `hinweis` | 7 kursiv, grau | – | – |
 
 ## 2. Geplante API (Oracle 19, bestehende Aufrufe bleiben gültig)
 
@@ -40,7 +40,7 @@ Benannte Styles:
 begin
   as_xlsx.clear_workbook;
   -- Template laden, optional mit eigener Schrift/Farbe
-  as_xlsx.use_template( p_font => 'Arial', p_fontsize => 10, p_accent => 'FF2F4F6F' );
+  as_xlsx.use_template( p_font => 'Hack', p_fontsize => 8, p_accent => 'FF2F4F6F' );
   -- eigenen Style definieren oder einen Standard-Style überschreiben
   as_xlsx.define_style( 'warnung'
                       , p_font_bold => true, p_font_rgb => 'FFC00000'
