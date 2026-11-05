@@ -101,6 +101,7 @@ is
 **     Added named styles: set_default_font, define_style, use_template,
 **       get_style_xfid, style_exists and p_style parameters
 **     Added p_styled, p_sum_columns and p_col_styles to query2sheet
+**     Added query2blob, callable from SQL
 ******************************************************************************
 ******************************************************************************
 Copyright (C) 2011, 2025 by Anton Scheffer
@@ -669,6 +670,29 @@ top
   return number;  -- number of records returned by the query
   --
   procedure setUseXf( p_val boolean := true );
+--
+/*
+  query2blob returns a complete xlsx for one query and can be called from SQL,
+  for instance in SQL Developer, SQLcl or Toad, to save the file on your own PC:
+    select as_xlsx.query2blob( 'select * from emp', p_title => 'Mitarbeiter' ) xlsx from dual;
+  All parameters are SQL types (no booleans), so it also works on Oracle 19.
+  p_styled 'Y' (default) uses the template (see use_template), 'N' a plain export.
+  p_sum_columns and p_col_styles: see query2sheet.
+  The function clears the current workbook.
+*/
+  function query2blob
+    ( p_sql          varchar2
+    , p_title        varchar2 := null
+    , p_sheetname    varchar2 := null
+    , p_styled       varchar2 := 'Y'
+    , p_sum_columns  varchar2 := null
+    , p_col_styles   varchar2 := null
+    , p_font         varchar2 := null -- default Hack
+    , p_fontsize     number   := null -- default 8
+    , p_accent       varchar2 := null -- default FF2F4F6F
+    , p_password     varchar2 := null -- needs use_dbms_crypto = true
+    )
+  return blob;
 --
 /*
 use p_width and p_height to pass the size of an image which is not a png, jpg, gif or bmp

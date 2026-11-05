@@ -3457,6 +3457,52 @@ $END
              );
   end;
   --
+  function query2blob
+    ( p_sql          varchar2
+    , p_title        varchar2 := null
+    , p_sheetname    varchar2 := null
+    , p_styled       varchar2 := 'Y'
+    , p_sum_columns  varchar2 := null
+    , p_col_styles   varchar2 := null
+    , p_font         varchar2 := null
+    , p_fontsize     number   := null
+    , p_accent       varchar2 := null
+    , p_password     varchar2 := null
+    )
+  return blob
+  is
+    l_styled boolean := upper( substr( coalesce( p_styled, 'Y' ), 1, 1 ) ) in ( 'Y', 'J', '1', 'T' );
+    l_rows   number;
+  begin
+    clear_workbook;
+    if l_styled
+    then
+      use_template( p_font     => coalesce( p_font, 'Hack' )
+                  , p_fontsize => coalesce( p_fontsize, 8 )
+                  , p_accent   => coalesce( p_accent, 'FF2F4F6F' )
+                  );
+    end if;
+    new_sheet( p_sheetname );
+    l_rows := query2sheet
+                ( p_sql         => p_sql
+                , p_sheet       => 1
+                , p_title       => p_title
+                , p_title_xfid  => case when p_title is not null and not l_styled
+                                     then get_xfid( p_fontId => get_font( 'Calibri', p_bold => true ) )
+                                   end
+                , p_autofilter  => true
+                , p_styled      => l_styled
+                , p_sum_columns => p_sum_columns
+                , p_col_styles  => p_col_styles
+                );
+    if l_rows is null
+    then
+      clear_workbook;
+      raise_application_error( -20110, 'as_xlsx.query2blob: the query failed while fetching rows' );
+    end if;
+    return finish( p_password );
+  end query2blob;
+  --
   procedure query2sheet
     ( p_sql            varchar2
     , p_column_headers boolean     := true
